@@ -335,17 +335,66 @@ if api_key:
             # 3. Tạo file Excel xuất ra bằng thư viện openpyxl qua Pandas
             # Lưu file Excel vào bộ nhớ đệm (BytesIO) để phục vụ việc download trực tiếp
             excel_buffer = io.BytesIO()
+            from openpyxl.styles import Border, Side, PatternFill, Font, Alignment
+            
             with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
-                # Đẩy dataframe gốc vào sheet Excel
-                df.to_excel(writer, index=False, sheet_name="HoaDonTricXuat")
+                # Đẩy dataframe hiển thị (đã Việt hóa tiêu đề) vào sheet Excel
+                df_display.to_excel(writer, index=False, sheet_name="HoaDonTricXuat")
                 
-                # Tùy biến định dạng cho file Excel (tự động giãn độ rộng cột)
                 workbook = writer.book
                 worksheet = writer.sheets["HoaDonTricXuat"]
+                
+                # Định nghĩa các kiểu định dạng (border, màu nền, font)
+                thin_border = Border(
+                    left=Side(style='thin', color='CCCCCC'),
+                    right=Side(style='thin', color='CCCCCC'),
+                    top=Side(style='thin', color='CCCCCC'),
+                    bottom=Side(style='thin', color='CCCCCC')
+                )
+                
+                header_fill = PatternFill(start_color='1E3A8A', end_color='1E3A8A', fill_type='solid')  # Màu xanh Navy đậm
+                header_font = Font(name='Segoe UI', size=11, bold=True, color='FFFFFF')  # Chữ trắng, in đậm
+                data_font = Font(name='Segoe UI', size=10)
+                
+                # Áp dụng định dạng (border, font, căn lề, format số) cho từng ô
+                for row_idx, row in enumerate(worksheet.iter_rows(min_row=1, max_row=worksheet.max_row, min_col=1, max_col=worksheet.max_column), start=1):
+                    for col_idx, cell in enumerate(row, start=1):
+                        # Áp dụng kẻ khung viền cho tất cả các ô
+                        cell.border = thin_border
+                        
+                        if row_idx == 1:
+                            # Định dạng cho hàng tiêu đề
+                            cell.fill = header_fill
+                            cell.font = header_font
+                            cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+                        else:
+                            # Định dạng cho hàng dữ liệu
+                            cell.font = data_font
+                            
+                            # Căn lề số tiền sang bên phải (các cột: Tiền Trước Thuế, Tiền Thuế GTGT, Tổng Thanh Toán)
+                            if col_idx in [6, 7, 8]:
+                                cell.alignment = Alignment(horizontal='right', vertical='center')
+                                # Định dạng hiển thị số tiền có dấu phân cách hàng nghìn (ví dụ: 1,500,000)
+                                if isinstance(cell.value, (int, float)):
+                                    cell.number_format = '#,##0'
+                            # Căn lề giữa cho các cột ngắn (Số Hóa Đơn, Ngày Lập, MST Bán, Trạng Thái)
+                            elif col_idx in [2, 3, 4, 9]:
+                                cell.alignment = Alignment(horizontal='center', vertical='center')
+                            # Căn lề trái cho các cột văn bản dài (Tên File, Đơn Vị Bán, Chi Tiết Lỗi)
+                            else:
+                                cell.alignment = Alignment(horizontal='left', vertical='center')
+                
+                # Tự động điều chỉnh độ rộng cột dựa trên nội dung đã định dạng
                 for col in worksheet.columns:
-                    max_len = max(len(str(cell.value or '')) for cell in col)
+                    max_len = 0
+                    for cell in col:
+                        val_str = str(cell.value or '')
+                        # Nếu là số tiền, tính độ dài dựa trên chuỗi đã format có dấu phẩy phân cách nghìn
+                        if cell.number_format == '#,##0' and isinstance(cell.value, (int, float)):
+                            val_str = f"{cell.value:,.0f}"
+                        max_len = max(max_len, len(val_str))
                     col_letter = col[0].column_letter
-                    worksheet.column_dimensions[col_letter].width = max(max_len + 3, 12)
+                    worksheet.column_dimensions[col_letter].width = max(max_len + 4, 12)
             
             excel_data = excel_buffer.getvalue()
             
