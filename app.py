@@ -336,6 +336,7 @@ else:
                             "status": "Thất bại",
                             "error_message": "Lỗi: File trống (dung lượng 0 bytes)."
                         })
+                    else:
                         # Nếu không phải file đầu tiên, thêm khoảng nghỉ ngắn 6 giây
                         # để tránh lỗi Rate Limit (Too Many Requests - HTTP 429) của gói Gemini Free Tier (15 RPM)
                         if idx > 0:
