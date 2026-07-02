@@ -166,22 +166,23 @@ def clean_numeric_value(val) -> float:
 # ---------------------------------------------------------
 # Hàm xử lý cuộc gọi API đến Gemini
 # ---------------------------------------------------------
+import time
+
 def extract_invoice_data(file_bytes, mime_type, model_name, api_key_to_use) -> dict:
-    """Gửi file hóa đơn (PDF hoặc ảnh) qua Gemini API để bóc tách thông tin dạng JSON."""
+    """Gửi file hóa đơn qua Gemini API kèm cơ chế Auto-Retry khi dính Rate Limit (429)."""
     # Khởi tạo API Key
     genai.configure(api_key=api_key_to_use)
     
-    # Khởi tạo mô hình cấu hình kèm Structured Output (JSON Mode)
+    # Khởi tạo mô hình
     model = genai.GenerativeModel(
         model_name=model_name,
         generation_config=genai.GenerationConfig(
             response_mime_type="application/json",
             response_schema=InvoiceData,
-            temperature=0.1 # Đặt temperature thấp để có kết quả ổn định, chính xác
+            temperature=0.1
         )
     )
     
-    # Prompt hướng dẫn chi tiết
     prompt = """
     Bạn là một trợ lý AI chuyên nghiệp về xử lý tài liệu kế toán. Nhiệm vụ của bạn là bóc tách thông tin từ hóa đơn được cung cấp (dưới dạng ảnh hoặc PDF).
     Hãy điền chính xác thông tin vào các trường được định nghĩa trong schema JSON:
@@ -196,18 +197,36 @@ def extract_invoice_data(file_bytes, mime_type, model_name, api_key_to_use) -> d
     Lưu ý quan trọng: Chỉ trích xuất thông tin khách quan từ tài liệu. Không tự bịa thông tin.
     """
     
-    # Chuẩn bị định dạng file gửi lên API
     file_part = {
         "mime_type": mime_type,
         "data": file_bytes
     }
     
-    # Thực hiện gọi API
-    response = model.generate_content([file_part, prompt])
+    # Cơ chế Auto-Retry (Tối đa 5 lần) khi bị lỗi 429 (Rate limit)
+    max_retries = 5
+    base_delay = 3.0 # giây
     
-    # Parse kết quả JSON nhận được
-    data = json.loads(response.text)
-    return data
+    for attempt in range(max_retries):
+        try:
+            response = model.generate_content([file_part, prompt])
+            return json.loads(response.text)
+        except Exception as e:
+            err_msg = str(e)
+            is_rate_limit = any(x in err_msg.lower() for x in ["429", "quota", "resourceexhausted", "rate limit"])
+            
+            if is_rate_limit and attempt < max_retries - 1:
+                # Trích xuất thời gian chờ từ thông báo lỗi của Google nếu có (ví dụ: "retry in 3.016s")
+                wait_time = base_delay
+                match = re.search(r"retry in ([\d\.]+)s", err_msg.lower())
+                if match:
+                    wait_time = float(match.group(1)) + 0.5 # Cộng thêm 0.5s sai số an toàn
+                
+                st.toast(f"⏳ Hàng đợi bận (Rate Limit). Tự động thử lại sau {wait_time:.1f} giây...", icon="⚠️")
+                time.sleep(wait_time)
+                base_delay *= 2 # Nhân đôi thời gian chờ cho lần sau nếu vẫn lỗi
+            else:
+                # Nếu không phải lỗi Rate limit hoặc đã thử lại quá số lần, quăng lỗi ra ngoài
+                raise e
 
 # ---------------------------------------------------------
 # Giao diện tải file và xử lý chính
@@ -247,7 +266,7 @@ if uploaded_files:
                 # Sử dụng spinner riêng cho từng file
                 with st.spinner(f"Đang bóc tách file {file_name}..."):
                     try:
-                        # Gọi API để lấy kết quả
+                        # Gọi API để lấy kết quả (Đã tích hợp Auto-Retry bên trong)
                         raw_data = extract_invoice_data(file_bytes, mime_type, model_choice, api_key)
                         
                         # Làm sạch dữ liệu số liệu
@@ -267,6 +286,9 @@ if uploaded_files:
                             "Tổng cộng (Total)": total_clean
                         }
                         success_results.append(processed_item)
+                        
+                        # Giãn cách nhẹ giữa các file để tránh kích hoạt cơ chế chống spam (RPM limit)
+                        time.sleep(1.5)
                         
                     except Exception as e:
                         # Ghi nhận lỗi và hiển thị cảnh báo để tránh sập app (Fault-tolerant)
