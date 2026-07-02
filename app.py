@@ -336,13 +336,12 @@ else:
                             "status": "Thất bại",
                             "error_message": "Lỗi: File trống (dung lượng 0 bytes)."
                         })
-                    else:
-                        # Nếu không phải file đầu tiên, thêm khoảng nghỉ ngắn 4 giây
+                        # Nếu không phải file đầu tiên, thêm khoảng nghỉ ngắn 6 giây
                         # để tránh lỗi Rate Limit (Too Many Requests - HTTP 429) của gói Gemini Free Tier (15 RPM)
                         if idx > 0:
-                            status_text.markdown(f"⏳ Đang chờ giãn cách 4 giây để bảo vệ API... (File {idx + 1}/{len(uploaded_files)}: `{file_name}`)")
+                            status_text.markdown(f"⏳ Đang chờ giãn cách 6 giây để bảo vệ API... (File {idx + 1}/{len(uploaded_files)}: `{file_name}`)")
                             import time
-                            time.sleep(4.0)
+                            time.sleep(6.0)
                             status_text.markdown(f"⏳ Đang xử lý file ({idx + 1}/{len(uploaded_files)}): `{file_name}`...")
                         
                         # Gọi hàm trích xuất dữ liệu từ Backend
@@ -366,8 +365,12 @@ else:
                 ]
                 df = df[cols_order]
                 
+                # Chèn thêm cột số thứ tự (STT) bắt đầu từ 1 vào đầu bảng
+                df.insert(0, "STT", range(1, len(df) + 1))
+                
                 # Việt hóa tiêu đề các cột để hiển thị trên bảng
                 df_display = df.rename(columns={
+                    "STT": "STT",
                     "file_name": "Tên File",
                     "invoice_number": "Số Hóa Đơn",
                     "invoice_date": "Ngày Lập",
@@ -392,9 +395,9 @@ else:
                 with col3:
                     st.metric("Thất bại ❌", fail_count)
                 
-                # Hiển thị bảng kết quả Preview
+                # Hiển thị bảng kết quả Preview (ẩn cột index mặc định của Pandas)
                 st.markdown("### 📊 Xem trước kết quả trích xuất")
-                st.dataframe(df_display, use_container_width=True)
+                st.dataframe(df_display, use_container_width=True, hide_index=True)
                 
                 # 3. Tạo file Excel xuất ra bằng thư viện openpyxl qua Pandas
                 # Lưu file Excel vào bộ nhớ đệm (BytesIO) để phục vụ việc download trực tiếp
@@ -435,16 +438,16 @@ else:
                                 # Định dạng cho hàng dữ liệu
                                 cell.font = data_font
                                 
-                                # Căn lề số tiền sang bên phải (các cột: Tiền Trước Thuế, Tiền Thuế GTGT, Tổng Thanh Toán)
-                                if col_idx in [6, 7, 8]:
+                                # Căn lề số tiền sang bên phải (các cột: Tiền Trước Thuế, Tiền Thuế GTGT, Tổng Thanh Toán - nay là cột 7, 8, 9)
+                                if col_idx in [7, 8, 9]:
                                     cell.alignment = Alignment(horizontal='right', vertical='center')
                                     # Định dạng hiển thị số tiền có dấu phân cách hàng nghìn (ví dụ: 1,500,000)
                                     if isinstance(cell.value, (int, float)):
                                         cell.number_format = '#,##0'
-                                # Căn lề giữa cho các cột ngắn (Số Hóa Đơn, Ngày Lập, MST Bán, Trạng Thái)
-                                elif col_idx in [2, 3, 4, 9]:
+                                # Căn lề giữa cho các cột ngắn (STT, Số Hóa Đơn, Ngày Lập, MST Bán, Trạng Thái - nay là cột 1, 3, 4, 5, 10)
+                                elif col_idx in [1, 3, 4, 5, 10]:
                                     cell.alignment = Alignment(horizontal='center', vertical='center')
-                                # Căn lề trái cho các cột văn bản dài (Tên File, Đơn Vị Bán, Chi Tiết Lỗi)
+                                # Căn lề trái cho các cột văn bản dài (Tên File, Đơn Vị Bán, Chi Tiết Lỗi - nay là cột 2, 6, 11)
                                 else:
                                     cell.alignment = Alignment(horizontal='left', vertical='center')
                     
