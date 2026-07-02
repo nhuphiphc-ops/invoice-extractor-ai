@@ -337,6 +337,14 @@ else:
                             "error_message": "Lỗi: File trống (dung lượng 0 bytes)."
                         })
                     else:
+                        # Nếu không phải file đầu tiên, thêm khoảng nghỉ ngắn 4 giây
+                        # để tránh lỗi Rate Limit (Too Many Requests - HTTP 429) của gói Gemini Free Tier (15 RPM)
+                        if idx > 0:
+                            status_text.markdown(f"⏳ Đang chờ giãn cách 4 giây để bảo vệ API... (File {idx + 1}/{len(uploaded_files)}: `{file_name}`)")
+                            import time
+                            time.sleep(4.0)
+                            status_text.markdown(f"⏳ Đang xử lý file ({idx + 1}/{len(uploaded_files)}): `{file_name}`...")
+                        
                         # Gọi hàm trích xuất dữ liệu từ Backend
                         extracted_data = extract_invoice_data(api_key, file_bytes, mime_type, file_name)
                         results.append(extracted_data)
