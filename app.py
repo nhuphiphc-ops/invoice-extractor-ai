@@ -206,7 +206,7 @@ def extract_invoice_data(api_key, file_bytes, mime_type, file_name):
 # KỊCH BẢN 1: NẾU NGƯỜI DÙNG CHƯA ĐĂNG NHẬP -> HIỂN THỊ MÀN HÌNH LOGIN
 if not st.session_state["authenticated"]:
     st.markdown("<h1 class='main-title'>🧾 AI Invoice Extractor</h1>", unsafe_allow_html=True)
-    st.markdown("<p class='subtitle'>Hệ thống Trích xuất Hóa đơn Tự động bằng Trí tuệ nhân tạo</p>", unsafe_allowed_html=True)
+    st.markdown("<p class='subtitle'>Hệ thống Trích xuất Hóa đơn Tự động bằng Trí tuệ nhân tạo</p>", unsafe_allow_html=True)
     
     # Tạo Form đăng nhập căn giữa
     col1, col2, col3 = st.columns([1, 1.8, 1])
