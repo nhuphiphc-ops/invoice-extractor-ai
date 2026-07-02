@@ -72,17 +72,23 @@ st.markdown("---")
 # ---------------------------------------------------------
 st.sidebar.header("⚙️ Cấu hình Hệ thống")
 
-# Lấy API Key từ Streamlit secrets hoặc cho phép người dùng nhập tay nếu chạy dưới local
-api_key = ""
+# Lấy API Key từ Secrets làm mặc định (nếu có)
+default_key = ""
 if "GEMINI_API_KEY" in st.secrets:
-    api_key = st.secrets["GEMINI_API_KEY"]
-    st.sidebar.success("🔑 Đã tự động tải API Key từ Secrets.")
+    default_key = st.secrets["GEMINI_API_KEY"]
+
+# Luôn hiển thị ô nhập để người dùng chủ động kiểm tra và cập nhật thủ công
+api_key = st.sidebar.text_input(
+    "Google Gemini API Key:",
+    value=default_key,
+    type="password",
+    help="Được tự động tải từ cấu hình Secrets. Bạn có thể dán đè khóa mới vào đây để thay đổi thủ công."
+)
+
+if api_key:
+    st.sidebar.success("🔑 API Key đã sẵn sàng sử dụng.")
 else:
-    api_key = st.sidebar.text_input("Nhập Google Gemini API Key:", type="password", help="API Key này được dùng để gọi mô hình Gemini 1.5. Key của bạn sẽ không bị lưu trữ.")
-    if api_key:
-        st.sidebar.success("🔑 Đã nhận API Key từ người dùng.")
-    else:
-        st.sidebar.warning("⚠️ Vui lòng cấu hình API Key trong Secrets hoặc nhập tại đây để bắt đầu.")
+    st.sidebar.warning("⚠️ Vui lòng cung cấp API Key để bắt đầu bóc tách.")
 
 # Cho phép chọn Model (Danh sách mô hình ổn định được cấu hình thủ công)
 model_choice = st.sidebar.selectbox(
