@@ -137,67 +137,97 @@ invoice_schema = {
 # ==============================================================================
 # 5. LOGIC XỬ LÝ BACKEND (GỌI GEMINI API & CƠ CHẾ SELF-CHECKING)
 # ==============================================================================
-def extract_invoice_data(api_key, file_bytes, mime_type, file_name):
+def extract_invoice_data(api_key, file_bytes, mime_type, file_name, status_placeholder=None):
     """
     Gửi file nhị phân sang Gemini API để phân tích cấu trúc và trích xuất dữ liệu.
-    Bọc trong khối try-except cục bộ để tự cô lập lỗi của từng file (Crash-resistant).
+    Hỗ trợ cơ chế Auto-Retry tự động thử lại trực quan khi gặp lỗi Rate Limit (HTTP 429 / ResourceExhausted).
     """
-    try:
-        # Cấu hình API Key cho thư viện
-        genai.configure(api_key=api_key)
-        
-        # Khởi tạo mô hình Gemini 2.5 Flash
-        model = genai.GenerativeModel('gemini-2.5-flash')
-        
-        # Đóng gói file thành format đầu vào của Gemini Multimodal API
-        file_part = {
-            "mime_type": mime_type,
-            "data": file_bytes
-        }
-        
-        prompt = (
-            "Bạn là một trợ lý AI chuyên nghiệp về kế toán và xử lý tài liệu tại Việt Nam.\n"
-            "Hãy đọc và phân tích kỹ tài liệu hóa đơn được cung cấp (dạng PDF hoặc hình ảnh).\n"
-            "Trích xuất chính xác các thông tin cần thiết theo đúng cấu trúc yêu cầu.\n"
-            "Lưu ý quan trọng:\n"
-            "1. Đối với các trường số tiền (total_before_tax, tax_amount, total_amount), "
-            "hãy chuyển đổi về dạng số thập phân thuần túy (float), loại bỏ mọi dấu phân cách hàng nghìn (ví dụ: dấu chấm hay phẩy) và đơn vị tiền tệ VND.\n"
-            "Ví dụ: '1.500.000 đ' -> 1500000.0\n"
-            "2. Đảm bảo mã số thuế người bán (seller_tax_code) là một chuỗi số viết liền, bao gồm cả chi nhánh phụ nếu có (ví dụ: '0101234567-001').\n"
-            "3. Nếu thông tin nào không tồn tại trong hóa đơn, hãy trả về null."
-        )
-        
-        # Gọi API với cấu hình Structured Output thông qua response_schema dạng dict
-        response = model.generate_content(
-            [prompt, file_part],
-            generation_config=genai.GenerationConfig(
-                response_mime_type="application/json",
-                response_schema=invoice_schema,
-                temperature=0.1  # Giảm tính ngẫu nhiên để tăng độ chính xác trích xuất
+    import time
+    import re
+    
+    max_retries = 5
+    base_delay = 10.0
+    
+    for attempt in range(max_retries):
+        try:
+            # Cấu hình API Key cho thư viện
+            genai.configure(api_key=api_key)
+            
+            # Khởi tạo mô hình Gemini 2.5 Flash
+            model = genai.GenerativeModel('gemini-2.5-flash')
+            
+            # Đóng gói file thành format đầu vào của Gemini Multimodal API
+            file_part = {
+                "mime_type": mime_type,
+                "data": file_bytes
+            }
+            
+            prompt = (
+                "Bạn là một trợ lý AI chuyên nghiệp về kế toán và xử lý tài liệu tại Việt Nam.\n"
+                "Hãy đọc và phân tích kỹ tài liệu hóa đơn được cung cấp (dạng PDF hoặc hình ảnh).\n"
+                "Trích xuất chính xác các thông tin cần thiết theo đúng cấu trúc yêu cầu.\n"
+                "Lưu ý quan trọng:\n"
+                "1. Đối với các trường số tiền (total_before_tax, tax_amount, total_amount), "
+                "hãy chuyển đổi về dạng số thập phân thuần túy (float), loại bỏ mọi dấu phân cách hàng nghìn (ví dụ: dấu chấm hay phẩy) và đơn vị tiền tệ VND.\n"
+                "Ví dụ: '1.500.000 đ' -> 1500000.0\n"
+                "2. Đảm bảo mã số thuế người bán (seller_tax_code) là một chuỗi số viết liền, bao gồm cả chi nhánh phụ nếu có (ví dụ: '0101234567-001').\n"
+                "3. Nếu thông tin nào không tồn tại trong hóa đơn, hãy trả về null."
             )
-        )
-        
-        # Chuyển đổi chuỗi JSON phản hồi thành Python dict
-        result_json = json.loads(response.text)
-        result_json["file_name"] = file_name
-        result_json["status"] = "Thành công"
-        result_json["error_message"] = ""
-        
-        return result_json
+            
+            # Gọi API với cấu hình Structured Output thông qua response_schema dạng dict
+            response = model.generate_content(
+                [prompt, file_part],
+                generation_config=genai.GenerationConfig(
+                    response_mime_type="application/json",
+                    response_schema=invoice_schema,
+                    temperature=0.1  # Giảm tính ngẫu nhiên để tăng độ chính xác trích xuất
+                )
+            )
+            
+            # Chuyển đổi chuỗi JSON phản hồi thành Python dict
+            result_json = json.loads(response.text)
+            result_json["file_name"] = file_name
+            result_json["status"] = "Thành công"
+            result_json["error_message"] = ""
+            
+            return result_json
 
-    except Exception as e:
-        return {
-            "file_name": file_name,
-            "invoice_number": None,
-            "invoice_date": None,
-            "seller_tax_code": None,
-            "seller_name": None,
-            "total_before_tax": None,
-            "tax_amount": None,
-            "total_amount": None,
-            "status": "Thất bại",
-            "error_message": f"Lỗi xử lý: {str(e)}"
-        }
+        except Exception as e:
+            error_str = str(e)
+            # Kiểm tra xem có phải lỗi Rate Limit (429, Quota exceeded, ResourceExhausted) không
+            is_rate_limit = any(keyword in error_str.lower() for keyword in ["429", "quota", "resourceexhausted", "limit"])
+            
+            if is_rate_limit and attempt < max_retries - 1:
+                # Trích xuất số giây cần chờ từ lỗi nếu có (ví dụ: "Please retry in 48.04s")
+                wait_time = base_delay
+                match = re.search(r"retry in (\d+(?:\.\d+)?)s", error_str)
+                if match:
+                    wait_time = float(match.group(1)) + 2.0  # Cộng thêm 2 giây an toàn
+                
+                # Cập nhật cảnh báo lên giao diện để người dùng theo dõi
+                if status_placeholder:
+                    status_placeholder.warning(
+                        f"⚠️ File `{file_name}` bị quá tải API (Lỗi 429). "
+                        f"Hệ thống tự động chờ {wait_time:.1f} giây để reset băng thông và thử lại (Lần {attempt + 1}/{max_retries})..."
+                    )
+                
+                # Tạm dừng và quay lại vòng lặp để thử lại
+                time.sleep(wait_time)
+                continue
+            
+            # Nếu là lỗi khác hoặc đã hết số lần thử lại
+            return {
+                "file_name": file_name,
+                "invoice_number": None,
+                "invoice_date": None,
+                "seller_tax_code": None,
+                "seller_name": None,
+                "total_before_tax": None,
+                "tax_amount": None,
+                "total_amount": None,
+                "status": "Thất bại",
+                "error_message": f"Lỗi xử lý: {error_str}"
+            }
 
 # ==============================================================================
 # 6. GIAO DIỆN PHẦN MỀM (FRONTEND)
@@ -345,8 +375,8 @@ else:
                             time.sleep(6.0)
                             status_text.markdown(f"⏳ Đang xử lý file ({idx + 1}/{len(uploaded_files)}): `{file_name}`...")
                         
-                        # Gọi hàm trích xuất dữ liệu từ Backend
-                        extracted_data = extract_invoice_data(api_key, file_bytes, mime_type, file_name)
+                        # Gọi hàm trích xuất dữ liệu từ Backend (truyền thêm status_text để hiển thị cảnh báo thử lại nếu quá tải)
+                        extracted_data = extract_invoice_data(api_key, file_bytes, mime_type, file_name, status_placeholder=status_text)
                         results.append(extracted_data)
                     
                     # Cập nhật thanh tiến trình
