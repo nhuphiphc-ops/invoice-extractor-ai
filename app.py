@@ -253,23 +253,40 @@ if uploaded_files:
             # Tạo thanh tiến trình tổng quan
             progress_bar = st.progress(0.0)
             status_text = st.empty()
+            status_text.markdown("⚡ **Đang bắt đầu xử lý song song các hóa đơn...**")
             
-            # Duyệt qua từng file được upload
-            for idx, file in enumerate(uploaded_files):
-                file_name = file.name
-                mime_type = file.type
-                file_bytes = file.getvalue()
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+            
+            # Giới hạn tối đa 5 luồng xử lý song song để tránh vượt ngưỡng RPM của API
+            max_workers = min(5, len(uploaded_files))
+            
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                # Gửi toàn bộ file vào hàng chờ xử lý của Thread Pool
+                future_to_filename = {
+                    executor.submit(
+                        extract_invoice_data, 
+                        file.getvalue(), 
+                        file.type, 
+                        model_choice, 
+                        api_key
+                    ): file.name for file in uploaded_files
+                }
                 
-                # Cập nhật giao diện tiến trình cho file hiện tại
-                percent_complete = (idx) / len(uploaded_files)
-                progress_bar.progress(percent_complete)
-                status_text.markdown(f"⏳ **Đang xử lý ({idx+1}/{len(uploaded_files)}):** `{file_name}`...")
+                completed = 0
+                total_files = len(uploaded_files)
                 
-                # Sử dụng spinner riêng cho từng file
-                with st.spinner(f"Đang bóc tách file {file_name}..."):
+                for future in as_completed(future_to_filename):
+                    file_name = future_to_filename[future]
+                    completed += 1
+                    
+                    # Cập nhật tiến trình thời gian thực
+                    percent_complete = completed / total_files
+                    progress_bar.progress(percent_complete)
+                    status_text.markdown(f"⏳ **Tiến trình:** Đã hoàn thành `{completed}/{total_files}` file...")
+                    
                     try:
-                        # Gọi API để lấy kết quả (Đã tích hợp Auto-Retry bên trong)
-                        raw_data = extract_invoice_data(file_bytes, mime_type, model_choice, api_key)
+                        # Nhận kết quả từ luồng chạy
+                        raw_data = future.result()
                         
                         # Làm sạch dữ liệu số liệu
                         subtotal_clean = clean_numeric_value(raw_data.get("subtotal", 0.0))
@@ -289,11 +306,8 @@ if uploaded_files:
                         }
                         success_results.append(processed_item)
                         
-                        # Giãn cách siêu ngắn để tránh RPM limit nhưng vẫn đảm bảo tốc độ tối đa
-                        time.sleep(0.3)
-                        
                     except Exception as e:
-                        # Ghi nhận lỗi và hiển thị cảnh báo để tránh sập app (Fault-tolerant)
+                        # Ghi nhận lỗi cho file này và tiếp tục chạy các luồng khác (Fault-tolerant)
                         error_msg = str(e)
                         failed_results.append({
                             "Tên file": file_name,
