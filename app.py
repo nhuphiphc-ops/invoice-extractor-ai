@@ -84,37 +84,12 @@ else:
     else:
         st.sidebar.warning("⚠️ Vui lòng cấu hình API Key trong Secrets hoặc nhập tại đây để bắt đầu.")
 
-# Khởi tạo API Key để lấy danh sách mô hình động
-model_list = ["gemini-1.5-flash", "gemini-1.5-pro"] # Danh sách mặc định phòng hờ
-if api_key:
-    try:
-        genai.configure(api_key=api_key)
-        # Lấy danh sách các model khả dụng cho API key này
-        fetched_models = []
-        for m in genai.list_models():
-            if 'generateContent' in m.supported_generation_methods:
-                model_name_short = m.name.replace("models/", "")
-                # Chỉ lọc lấy các dòng mô hình gemini chính thức
-                if "gemini" in model_name_short:
-                    fetched_models.append(model_name_short)
-        
-        if fetched_models:
-            # Sắp xếp ưu tiên các dòng flash/pro mới nhất lên đầu
-            preferred_order = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash", "gemini-2.5-pro", "gemini-1.5-pro"]
-            sorted_models = [m for m in preferred_order if m in fetched_models]
-            # Thêm các model khác không nằm trong danh sách ưu tiên
-            sorted_models += [m for m in fetched_models if m not in sorted_models]
-            model_list = sorted_models
-    except Exception as e:
-        # Nếu có lỗi khi fetch (do lỗi mạng hoặc quyền hạn), giữ nguyên list mặc định
-        pass
-
-# Cho phép chọn Model động từ API
+# Cho phép chọn Model (Danh sách mô hình ổn định được cấu hình thủ công)
 model_choice = st.sidebar.selectbox(
     "Chọn mô hình AI:",
-    model_list,
+    ["gemini-2.0-flash", "gemini-2.5-flash", "gemini-1.5-flash", "gemini-2.5-pro", "gemini-1.5-pro"],
     index=0,
-    help="Hệ thống tự động quét và hiển thị các mô hình khả dụng tương thích với API Key của bạn."
+    help="Nên ưu tiên chọn gemini-2.0-flash để có tốc độ nhanh nhất và hạn mức gọi API rộng rãi nhất."
 )
 
 # Chỉ hiển thị hướng dẫn cấu hình nếu chưa có API Key tự động trong Secrets
