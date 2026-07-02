@@ -1,419 +1,330 @@
 import streamlit as st
 import google.generativeai as genai
 import pandas as pd
+import json
+import io
+import re
 from pydantic import BaseModel, Field
 from typing import Optional
-import os
-import io
-import json
-from PIL import Image
 
-# ==============================================================================
-# 1. CẤU HÌNH TRANG & GIAO DIỆN (THEME & STYLING)
-# ==============================================================================
+# Cấu hình giao diện Streamlit với Layout rộng và tiêu đề đẹp mắt
 st.set_page_config(
-    page_title="AI Invoice Extractor - Trích Xuất Hóa Đơn Tự Động",
+    page_title="AI Invoice Extractor - Trích xuất Hóa đơn Thông minh",
     page_icon="🧾",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS để giao diện trông chuyên nghiệp và hiện đại hơn
+# ---------------------------------------------------------
+# Định nghĩa Schema cho Dữ liệu Hóa đơn đầu ra (JSON Mode)
+# ---------------------------------------------------------
+class InvoiceData(BaseModel):
+    invoice_number: str = Field(description="Số hóa đơn (invoice number)")
+    date: str = Field(description="Ngày hóa đơn (định dạng DD/MM/YYYY)")
+    tax_code: str = Field(description="Mã số thuế bên bán / đơn vị phát hành hóa đơn (tax code)")
+    vendor_name: str = Field(description="Tên nhà cung cấp / đơn vị phát hành (vendor name)")
+    subtotal: float = Field(description="Cộng tiền hàng / trước thuế (subtotal amount)")
+    tax_amount: float = Field(description="Tiền thuế GTGT / VAT (tax amount)")
+    total_amount: float = Field(description="Tổng tiền thanh toán đã bao gồm thuế (total amount)")
+
+# ---------------------------------------------------------
+# Custom CSS giúp nâng cao trải nghiệm giao diện người dùng
+# ---------------------------------------------------------
 st.markdown("""
 <style>
-    /* Chỉnh sửa tổng thể */
-    .main-title {
-        font-size: 2.6rem;
-        color: #1E3A8A;
-        font-weight: 800;
-        margin-bottom: 0.5rem;
-        text-align: center;
+    /* Chỉnh sửa kiểu chữ toàn bộ trang */
+    html, body, [class*="css"] {
+        font-family: 'Inter', sans-serif;
     }
-    .subtitle {
-        font-size: 1.1rem;
-        color: #4B5563;
-        margin-bottom: 2rem;
-        text-align: center;
+    
+    /* Thiết kế thẻ Card cho thông tin tổng quan */
+    .metric-card {
+        background-color: #f8f9fa;
+        border-radius: 10px;
+        padding: 15px;
+        border-left: 5px solid #ff4b4b;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        margin-bottom: 15px;
     }
-    /* Tùy chỉnh các khối thông báo */
-    .stAlert {
-        border-radius: 8px;
+    
+    /* Chỉnh sửa nút Tải xuống trông chuyên nghiệp hơn */
+    .stDownloadButton button {
+        background-color: #0984e3 !important;
+        color: white !important;
+        border-radius: 8px !important;
+        font-weight: 600 !important;
+        border: none !important;
+        transition: all 0.3s ease;
     }
-    /* Chỉnh sửa bảng preview */
-    .dataframe {
-        border-radius: 8px;
-        overflow: hidden;
+    .stDownloadButton button:hover {
+        background-color: #74b9ff !important;
+        transform: translateY(-2px);
     }
 </style>
 """, unsafe_allow_html=True)
 
-# ==============================================================================
-# 2. XÁC THỰC API KEY BẢO MẬT
-# ==============================================================================
-def get_api_key():
-    """
-    Lấy API Key từ Streamlit Secrets hoặc Biến môi trường hệ thống.
-    Đảm bảo an toàn bảo mật, không lộ Key lên mã nguồn.
-    """
-    # 1. Tìm trong Streamlit Secrets (Dùng khi deploy lên Streamlit Cloud)
-    if "GEMINI_API_KEY" in st.secrets:
-        return st.secrets["GEMINI_API_KEY"]
-    
-    # 2. Tìm trong biến môi trường hệ thống
-    api_key = os.environ.get("GEMINI_API_KEY")
+# Tiêu đề chính của ứng dụng
+st.title("🧾 Trích xuất Hóa đơn sang Excel bằng AI")
+st.markdown("---")
+
+# ---------------------------------------------------------
+# Sidebar: Quản lý API Key & Cài đặt mô hình
+# ---------------------------------------------------------
+st.sidebar.header("⚙️ Cấu hình Hệ thống")
+
+# Lấy API Key từ Streamlit secrets hoặc cho phép người dùng nhập tay nếu chạy dưới local
+api_key = ""
+if "GEMINI_API_KEY" in st.secrets:
+    api_key = st.secrets["GEMINI_API_KEY"]
+    st.sidebar.success("🔑 Đã tự động tải API Key từ Secrets.")
+else:
+    api_key = st.sidebar.text_input("Nhập Google Gemini API Key:", type="password", help="API Key này được dùng để gọi mô hình Gemini 1.5. Key của bạn sẽ không bị lưu trữ.")
     if api_key:
-        return api_key
-        
-    return None
+        st.sidebar.success("🔑 Đã nhận API Key từ người dùng.")
+    else:
+        st.sidebar.warning("⚠️ Vui lòng cấu hình API Key trong Secrets hoặc nhập tại đây để bắt đầu.")
 
-api_key = get_api_key()
+# Cho phép chọn Model
+model_choice = st.sidebar.selectbox(
+    "Chọn mô hình AI:",
+    ["gemini-1.5-flash", "gemini-1.5-pro"],
+    index=0,
+    help="Gemini 1.5 Flash tối ưu về tốc độ và chi phí, Pro tối ưu về độ chính xác với hóa đơn phức tạp."
+)
 
-# ==============================================================================
-# 3. ĐỊNH NGHĨA SCHEMA CHO TRÍCH XUẤT DỮ LIỆU CÓ CẤU TRÚC (GEMINI SCHEMA DICT)
-# ==============================================================================
-# Định nghĩa Schema bằng dict chuẩn OpenAPI được Gemini API hỗ trợ trực tiếp.
-# Cách này tránh mọi lỗi tương thích về trường 'default' tự sinh của thư viện Pydantic.
-invoice_schema = {
-    "type": "OBJECT",
-    "properties": {
-        "invoice_number": {
-            "type": "STRING",
-            "description": "Số hóa đơn (Invoice number/No.). Nếu không tìm thấy, trả về null."
-        },
-        "invoice_date": {
-            "type": "STRING",
-            "description": "Ngày lập hóa đơn (Invoice date). Định dạng chuỗi chuẩn DD/MM/YYYY. Nếu không tìm thấy, trả về null."
-        },
-        "seller_tax_code": {
-            "type": "STRING",
-            "description": "Mã số thuế của bên bán / đơn vị cung cấp (Seller's Tax Code/MST). Nếu không tìm thấy, trả về null."
-        },
-        "seller_name": {
-            "type": "STRING",
-            "description": "Tên công ty / đơn vị bán hàng (Seller's Name). Nếu không tìm thấy, trả về null."
-        },
-        "total_before_tax": {
-            "type": "NUMBER",
-            "description": "Tổng tiền hàng chưa thuế / giá trị trước thuế (Total before tax/Subtotal). Trả về dạng số thực (float). Nếu không tìm thấy, trả về null."
-        },
-        "tax_amount": {
-            "type": "NUMBER",
-            "description": "Tiền thuế GTGT / VAT (Tax amount). Trả về dạng số thực (float). Nếu không tìm thấy, trả về null."
-        },
-        "total_amount": {
-            "type": "NUMBER",
-            "description": "Tổng cộng tiền thanh toán đã bao gồm thuế (Total payment amount/Total after tax). Trả về dạng số thực (float). Nếu không tìm thấy, trả về null."
-        }
-    },
-    "required": [
-        "invoice_number", "invoice_date", "seller_tax_code", 
-        "seller_name", "total_before_tax", "tax_amount", "total_amount"
-    ]
-}
+st.sidebar.markdown("""
+---
+### 📌 Lưu ý cấu hình Secrets khi Deploy:
+Để không cần nhập API Key mỗi lần mở web, hãy tạo cấu hình biến môi trường trên Streamlit Cloud với key:
+`GEMINI_API_KEY = "key_của_bạn"`
+""")
 
-# ==============================================================================
-# 4. LOGIC XỬ LÝ BACKEND (GỌI GEMINI API & CƠ CHẾ SELF-CHECKING)
-# ==============================================================================
-def extract_invoice_data(api_key, file_bytes, mime_type, file_name):
-    """
-    Gửi file nhị phân sang Gemini API để phân tích cấu trúc và trích xuất dữ liệu.
-    Bọc trong khối try-except cục bộ để tự cô lập lỗi của từng file (Crash-resistant).
-    """
+# ---------------------------------------------------------
+# Hàm hỗ trợ làm sạch dữ liệu số liệu
+# ---------------------------------------------------------
+def clean_numeric_value(val) -> float:
+    """Làm sạch các giá trị tiền tệ, loại bỏ ký tự chữ, ký hiệu tệ để chuyển thành float."""
+    if val is None:
+        return 0.0
+    if isinstance(val, (int, float)):
+        return float(val)
+    
+    # Chuyển thành chuỗi và xử lý
+    s = str(val).strip()
+    # Loại bỏ các ký tự tiền tệ như VNĐ, $, đ, VND...
+    s = re.sub(r'(?i)(VND|VNĐ|\$|đ|d)', '', s)
+    # Loại bỏ khoảng trắng
+    s = s.replace(" ", "")
+    
+    # Xử lý dấu phân cách hàng nghìn và dấu thập phân.
+    # Thông thường định dạng VN là 1.000.000,00 và quốc tế là 1,000,000.00
+    if ',' in s and '.' in s:
+        # Nếu có cả dấu phẩy và chấm, xác định dấu nào xuất hiện cuối cùng để làm dấu thập phân
+        if s.rfind(',') > s.rfind('.'):
+            s = s.replace(".", "").replace(",", ".")
+        else:
+            s = s.replace(",", "")
+    elif ',' in s:
+        # Nếu chỉ có dấu phẩy, có thể là phân cách hàng nghìn (kiểu Anh) hoặc dấu thập phân (kiểu Việt)
+        # Chúng ta giả định nếu sau dấu phẩy có đúng 2 hoặc 1 chữ số thì đó là thập phân, ngược lại là hàng nghìn
+        parts = s.split(',')
+        if len(parts[-1]) in [1, 2]:
+            s = s.replace(",", ".")
+        else:
+            s = s.replace(",", "")
+    
     try:
-        # Cấu hình API Key cho thư viện
-        genai.configure(api_key=api_key)
-        
-        # Khởi tạo mô hình Gemini 2.5 Flash
-        model = genai.GenerativeModel('gemini-2.0-flash')
-        
-        # Đóng gói file thành format đầu vào của Gemini Multimodal API
-        file_part = {
-            "mime_type": mime_type,
-            "data": file_bytes
-        }
-        
-        prompt = (
-            "Bạn là một trợ lý AI chuyên nghiệp về kế toán và xử lý tài liệu tại Việt Nam.\n"
-            "Hãy đọc và phân tích kỹ tài liệu hóa đơn được cung cấp (dạng PDF hoặc hình ảnh).\n"
-            "Trích xuất chính xác các thông tin cần thiết theo đúng cấu trúc yêu cầu.\n"
-            "Lưu ý quan trọng:\n"
-            "1. Đối với các trường số tiền (total_before_tax, tax_amount, total_amount), "
-            "hãy chuyển đổi về dạng số thập phân thuần túy (float), loại bỏ mọi dấu phân cách hàng nghìn (ví dụ: dấu chấm hay phẩy) và đơn vị tiền tệ VND.\n"
-            "Ví dụ: '1.500.000 đ' -> 1500000.0\n"
-            "2. Đảm bảo mã số thuế người bán (seller_tax_code) là một chuỗi số viết liền, bao gồm cả chi nhánh phụ nếu có (ví dụ: '0101234567-001').\n"
-            "3. Nếu thông tin nào không tồn tại trong hóa đơn, hãy trả về null."
+        return float(s)
+    except ValueError:
+        return 0.0
+
+# ---------------------------------------------------------
+# Hàm xử lý cuộc gọi API đến Gemini
+# ---------------------------------------------------------
+def extract_invoice_data(file_bytes, mime_type, model_name, api_key_to_use) -> dict:
+    """Gửi file hóa đơn (PDF hoặc ảnh) qua Gemini API để bóc tách thông tin dạng JSON."""
+    # Khởi tạo API Key
+    genai.configure(api_key=api_key_to_use)
+    
+    # Khởi tạo mô hình cấu hình kèm Structured Output (JSON Mode)
+    model = genai.GenerativeModel(
+        model_name=model_name,
+        generation_config=genai.GenerationConfig(
+            response_mime_type="application/json",
+            response_schema=InvoiceData,
+            temperature=0.1 # Đặt temperature thấp để có kết quả ổn định, chính xác
         )
-        
-        # Gọi API với cấu hình Structured Output thông qua response_schema dạng dict
-        response = model.generate_content(
-            [prompt, file_part],
-            generation_config=genai.GenerationConfig(
-                response_mime_type="application/json",
-                response_schema=invoice_schema,
-                temperature=0.1  # Giảm tính ngẫu nhiên để tăng độ chính xác trích xuất
-            )
-        )
-        
-        # Chuyển đổi chuỗi JSON phản hồi thành Python dict
-        result_json = json.loads(response.text)
-        result_json["file_name"] = file_name
-        result_json["status"] = "Thành công"
-        result_json["error_message"] = ""
-        
-        return result_json
-
-    except Exception as e:
-        # Nếu có bất kỳ lỗi nào xảy ra trong quá trình gọi API hoặc parse dữ liệu,
-        # ghi nhận lỗi cho file đó và trả về dict rỗng để không làm hỏng toàn bộ quy trình.
-        return {
-            "file_name": file_name,
-            "invoice_number": None,
-            "invoice_date": None,
-            "seller_tax_code": None,
-            "seller_name": None,
-            "total_before_tax": None,
-            "tax_amount": None,
-            "total_amount": None,
-            "status": "Thất bại",
-            "error_message": f"Lỗi xử lý: {str(e)}"
-        }
-
-# ==============================================================================
-# 5. GIAO DIỆN CHÍNH CỦA ỨNG DỤNG (FRONTEND)
-# ==============================================================================
-
-# Sidebar hướng dẫn cấu hình & thông tin dự án
-with st.sidebar:
-    st.image("https://img.icons8.com/clouds/200/000000/invoice.png", width=120)
-    st.markdown("### 📑 Hướng Dẫn Sử Dụng")
-    st.markdown(
-        """
-        1. **Tải lên hóa đơn**: Nhấn nút browse hoặc kéo thả các file hóa đơn dạng **PDF** hoặc **ảnh (PNG, JPG, JPEG)** vào khung tải lên.
-        2. **Trích xuất dữ liệu**: Nhấn nút **Bắt đầu trích xuất**. Hệ thống sẽ gọi Gemini AI xử lý song song từng file.
-        3. **Xem kết quả**: Kiểm tra bảng dữ liệu tổng hợp trực tiếp trên web.
-        4. **Xuất Excel**: Tải file Excel chứa toàn bộ thông tin đã trích xuất về máy.
-        """
-    )
-    st.markdown("---")
-    st.markdown("### 🔒 Bảo Mật Thông Tin")
-    st.info(
-        "API Key được quản lý an toàn qua biến môi trường (Streamlit Secrets). "
-        "Dữ liệu hóa đơn của bạn chỉ được xử lý qua API và không được lưu trữ lại trên máy chủ."
-    )
-    st.markdown("---")
-    st.markdown("⚡ *Powered by Gemini 2.5 Flash*")
-
-# Phần tiêu đề chính
-st.markdown("<h1 class='main-title'>🧾 AI Invoice Extractor</h1>", unsafe_allow_html=True)
-st.markdown("<p class='subtitle'>Trích xuất hóa đơn PDF & Ảnh sang Excel tự động bằng Trí tuệ nhân tạo Gemini</p>", unsafe_allow_html=True)
-
-# Kiểm tra trạng thái cấu hình API Key
-if not api_key:
-    st.warning("⚠️ **Hệ thống chưa được cấu hình API Key!**")
-    st.markdown(
-        """
-        **Hướng dẫn thiết lập nhanh:**
-        - **Khi chạy local**: Tạo file `.streamlit/secrets.toml` trong thư mục gốc của dự án và dán nội dung sau:
-          ```toml
-          GEMINI_API_KEY = "Nhập_API_Key_Gemini_Của_Bạn_Vào_Đây"
-          ```
-        - **Khi deploy lên Streamlit Cloud**: Vào cài đặt ứng dụng (App settings) -> mục **Secrets** và dán:
-          ```toml
-          GEMINI_API_KEY = "Nhập_API_Key_Gemini_Của_Bạn_Vào_Đây"
-          ```
-        """
-    )
-    # Cho phép người dùng nhập key tạm thời trực tiếp trên giao diện để dùng thử nếu muốn
-    temp_key = st.text_input("Hoặc nhập tạm thời API Key của bạn tại đây để trải nghiệm ngay:", type="password")
-    if temp_key:
-        api_key = temp_key
-        st.success("Đã ghi nhận API Key tạm thời!")
-
-# Nếu đã có API Key, tiếp tục hiển thị ứng dụng
-if api_key:
-    # 1. Khung upload file hóa đơn
-    uploaded_files = st.file_uploader(
-        "Tải lên các file hóa đơn (Hỗ trợ PDF, PNG, JPG, JPEG) - Có thể chọn nhiều file cùng lúc",
-        type=["pdf", "png", "jpg", "jpeg"],
-        accept_multiple_files=True
     )
     
-    if uploaded_files:
-        st.write(f"📂 Đã chọn **{len(uploaded_files)}** file để xử lý.")
-        
-        # Nút bấm bắt đầu trích xuất
-        if st.button("🚀 Bắt đầu trích xuất dữ liệu", use_container_width=True):
-            results = []
+    # Prompt hướng dẫn chi tiết
+    prompt = """
+    Bạn là một trợ lý AI chuyên nghiệp về xử lý tài liệu kế toán. Nhiệm vụ của bạn là bóc tách thông tin từ hóa đơn được cung cấp (dưới dạng ảnh hoặc PDF).
+    Hãy điền chính xác thông tin vào các trường được định nghĩa trong schema JSON:
+    - invoice_number: Số hóa đơn (nếu không thấy, điền 'N/A').
+    - date: Ngày hóa đơn dưới định dạng DD/MM/YYYY. Nếu ngày trên hóa đơn ở định dạng khác (ví dụ YYYY-MM-DD), hãy convert về DD/MM/YYYY.
+    - tax_code: Mã số thuế bên bán (nếu có, không chứa dấu cách hay ký tự lạ).
+    - vendor_name: Tên của công ty/hộ kinh doanh bán hàng.
+    - subtotal: Cộng tiền hàng (chưa bao gồm thuế GTGT). Nếu hóa đơn không tách biệt thuế, hãy tính toán hoặc lấy số tiền trước thuế.
+    - tax_amount: Tiền thuế GTGT.
+    - total_amount: Tổng tiền thanh toán (bao gồm cả thuế).
+    
+    Lưu ý quan trọng: Chỉ trích xuất thông tin khách quan từ tài liệu. Không tự bịa thông tin.
+    """
+    
+    # Chuẩn bị định dạng file gửi lên API
+    file_part = {
+        "mime_type": mime_type,
+        "data": file_bytes
+    }
+    
+    # Thực hiện gọi API
+    response = model.generate_content([file_part, prompt])
+    
+    # Parse kết quả JSON nhận được
+    data = json.loads(response.text)
+    return data
+
+# ---------------------------------------------------------
+# Giao diện tải file và xử lý chính
+# ---------------------------------------------------------
+uploaded_files = st.file_uploader(
+    "Tải lên các hóa đơn của bạn (Hỗ trợ PDF, PNG, JPG, JPEG)",
+    type=["pdf", "png", "jpg", "jpeg"],
+    accept_multiple_files=True
+)
+
+if uploaded_files:
+    st.info(f"📁 Đã chọn {len(uploaded_files)} file. Sẵn sàng xử lý.")
+    
+    # Nút bấm kích hoạt tiến trình
+    if st.button("🚀 Bắt đầu trích xuất dữ liệu", use_container_width=True):
+        if not api_key:
+            st.error("❌ Vui lòng cung cấp Gemini API Key tại Sidebar trước khi tiến hành xử lý!")
+        else:
+            success_results = []
+            failed_results = []
             
-            # Khởi tạo thanh tiến trình và trạng thái
-            progress_bar = st.progress(0)
+            # Tạo thanh tiến trình tổng quan
+            progress_bar = st.progress(0.0)
             status_text = st.empty()
             
-            # Vòng lặp xử lý từng file
-            for idx, uploaded_file in enumerate(uploaded_files):
-                file_name = uploaded_file.name
-                status_text.markdown(f"⏳ Đang xử lý file ({idx + 1}/{len(uploaded_files)}): `{file_name}`...")
+            # Duyệt qua từng file được upload
+            for idx, file in enumerate(uploaded_files):
+                file_name = file.name
+                mime_type = file.type
+                file_bytes = file.getvalue()
                 
-                # Đọc dữ liệu nhị phân của file
-                file_bytes = uploaded_file.read()
+                # Cập nhật giao diện tiến trình cho file hiện tại
+                percent_complete = (idx) / len(uploaded_files)
+                progress_bar.progress(percent_complete)
+                status_text.markdown(f"⏳ **Đang xử lý ({idx+1}/{len(uploaded_files)}):** `{file_name}`...")
                 
-                # Xác định Mime Type của file dựa trên đuôi mở rộng
-                file_extension = file_name.split('.')[-1].lower()
-                if file_extension == 'pdf':
-                    mime_type = 'application/pdf'
-                elif file_extension in ['png', 'jpg', 'jpeg']:
-                    mime_type = f'image/{file_extension if file_extension != "jpg" else "jpeg"}'
-                else:
-                    mime_type = 'application/octet-stream'
-                
-                # Tự kiểm tra định dạng và dữ liệu rỗng (Self-Checking)
-                if len(file_bytes) == 0:
-                    results.append({
-                        "file_name": file_name,
-                        "invoice_number": None,
-                        "invoice_date": None,
-                        "seller_tax_code": None,
-                        "seller_name": None,
-                        "total_before_tax": None,
-                        "tax_amount": None,
-                        "total_amount": None,
-                        "status": "Thất bại",
-                        "error_message": "Lỗi: File trống (dung lượng 0 bytes)."
-                    })
-                else:
-                    # Gọi hàm trích xuất dữ liệu từ Backend
-                    extracted_data = extract_invoice_data(api_key, file_bytes, mime_type, file_name)
-                    results.append(extracted_data)
-                
-                # Cập nhật thanh tiến trình
-                progress = (idx + 1) / len(uploaded_files)
-                progress_bar.progress(progress)
+                # Sử dụng spinner riêng cho từng file
+                with st.spinner(f"Đang bóc tách file {file_name}..."):
+                    try:
+                        # Gọi API để lấy kết quả
+                        raw_data = extract_invoice_data(file_bytes, mime_type, model_choice, api_key)
+                        
+                        # Làm sạch dữ liệu số liệu
+                        subtotal_clean = clean_numeric_value(raw_data.get("subtotal", 0.0))
+                        tax_clean = clean_numeric_value(raw_data.get("tax_amount", 0.0))
+                        total_clean = clean_numeric_value(raw_data.get("total_amount", 0.0))
+                        
+                        # Lưu kết quả thành công
+                        processed_item = {
+                            "Tên file": file_name,
+                            "Số hóa đơn": raw_data.get("invoice_number", "N/A"),
+                            "Ngày hóa đơn": raw_data.get("date", "N/A"),
+                            "Mã số thuế": raw_data.get("tax_code", "N/A"),
+                            "Tên nhà cung cấp": raw_data.get("vendor_name", "N/A"),
+                            "Cộng tiền hàng (Subtotal)": subtotal_clean,
+                            "Tiền thuế GTGT (Tax)": tax_clean,
+                            "Tổng cộng (Total)": total_clean
+                        }
+                        success_results.append(processed_item)
+                        
+                    except Exception as e:
+                        # Ghi nhận lỗi và hiển thị cảnh báo để tránh sập app (Fault-tolerant)
+                        error_msg = str(e)
+                        failed_results.append({
+                            "Tên file": file_name,
+                            "Lỗi chi tiết": error_msg
+                        })
+                        st.toast(f"❌ Lỗi xử lý file {file_name}!", icon="⚠️")
+                        st.warning(f"⚠️ Không thể xử lý file **{file_name}**. Lỗi: {error_msg}")
             
-            status_text.success("🎉 Đã hoàn thành xử lý toàn bộ các hóa đơn!")
+            # Cập nhật thanh tiến trình hoàn thành 100%
+            progress_bar.progress(1.0)
+            status_text.markdown("✅ **Đã hoàn thành xử lý toàn bộ danh sách tệp tin!**")
             
-            # 2. Xử lý hiển thị kết quả bằng Pandas
-            df = pd.DataFrame(results)
+            # ---------------------------------------------------------
+            # Hiển thị kết quả & Cho phép tải về Excel
+            # ---------------------------------------------------------
+            st.markdown("---")
+            st.subheader("📊 Kết quả trích xuất")
             
-            # Sắp xếp lại thứ tự cột cho hợp lý
-            cols_order = [
-                "file_name", "invoice_number", "invoice_date", 
-                "seller_tax_code", "seller_name", "total_before_tax", 
-                "tax_amount", "total_amount", "status", "error_message"
-            ]
-            df = df[cols_order]
-            
-            # Chèn thêm cột số thứ tự (STT) bắt đầu từ 1 vào đầu bảng
-            df.insert(0, "STT", range(1, len(df) + 1))
-            
-            # Việt hóa tiêu đề các cột để hiển thị trên bảng
-            df_display = df.rename(columns={
-                "STT": "STT",
-                "file_name": "Tên File",
-                "invoice_number": "Số Hóa Đơn",
-                "invoice_date": "Ngày Lập",
-                "seller_tax_code": "Mã Số Thuế Bán",
-                "seller_name": "Đơn Vị Bán",
-                "total_before_tax": "Tiền Trước Thuế",
-                "tax_amount": "Tiền Thuế GTGT",
-                "total_amount": "Tổng Thanh Toán",
-                "status": "Trạng Thái",
-                "error_message": "Chi Tiết Lỗi"
-            })
-            
-            # Hiển thị thống kê tổng quan
-            success_count = sum(1 for r in results if r["status"] == "Thành công")
-            fail_count = len(results) - success_count
-            
-            col1, col2, col3 = st.columns(3)
+            # Hiển thị số lượng thống kê
+            col1, col2 = st.columns(2)
             with col1:
-                st.metric("Tổng số file", len(results))
+                st.markdown(f"""
+                <div class="metric-card">
+                    <h3 style='margin:0;color:#2ecc71;'>🎉 Thành công: {len(success_results)} / {len(uploaded_files)}</h3>
+                    <p style='margin:5px 0 0 0;color:#7f8c8d;'>Các hóa đơn đã bóc tách thông tin hoàn tất.</p>
+                </div>
+                """, unsafe_allow_html=True)
             with col2:
-                st.metric("Thành công ✅", success_count)
-            with col3:
-                st.metric("Thất bại ❌", fail_count)
+                st.markdown(f"""
+                <div class="metric-card" style="border-left-color: #e74c3c;">
+                    <h3 style='margin:0;color:#e74c3c;'>⚠️ Thất bại: {len(failed_results)}</h3>
+                    <p style='margin:5px 0 0 0;color:#7f8c8d;'>Các file bị lỗi hoặc không thể phân tích.</p>
+                </div>
+                """, unsafe_allow_html=True)
             
-            # Hiển thị bảng kết quả Preview (ẩn cột index mặc định của Pandas)
-            st.markdown("### 📊 Xem trước kết quả trích xuất")
-            st.dataframe(df_display, use_container_width=True, hide_index=True)
-            
-            # 3. Tạo file Excel xuất ra bằng thư viện openpyxl qua Pandas
-            # Lưu file Excel vào bộ nhớ đệm (BytesIO) để phục vụ việc download trực tiếp
-            excel_buffer = io.BytesIO()
-            from openpyxl.styles import Border, Side, PatternFill, Font, Alignment
-            
-            with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
-                # Đẩy dataframe hiển thị (đã Việt hóa tiêu đề) vào sheet Excel
-                df_display.to_excel(writer, index=False, sheet_name="HoaDonTricXuat")
+            # Nếu có kết quả thành công, hiển thị và tạo file Excel
+            if success_results:
+                df = pd.DataFrame(success_results)
                 
-                workbook = writer.book
-                worksheet = writer.sheets["HoaDonTricXuat"]
-                
-                # Định nghĩa các kiểu định dạng (border, màu nền, font)
-                thin_border = Border(
-                    left=Side(style='thin', color='CCCCCC'),
-                    right=Side(style='thin', color='CCCCCC'),
-                    top=Side(style='thin', color='CCCCCC'),
-                    bottom=Side(style='thin', color='CCCCCC')
+                # Định dạng hiển thị dataframe trên Streamlit đẹp hơn
+                st.dataframe(
+                    df,
+                    use_container_width=True,
+                    column_config={
+                        "Cộng tiền hàng (Subtotal)": st.column_config.NumberColumn(format="%.2f"),
+                        "Tiền thuế GTGT (Tax)": st.column_config.NumberColumn(format="%.2f"),
+                        "Tổng cộng (Total)": st.column_config.NumberColumn(format="%.2f")
+                    }
                 )
                 
-                header_fill = PatternFill(start_color='1E3A8A', end_color='1E3A8A', fill_type='solid')  # Màu xanh Navy đậm
-                header_font = Font(name='Segoe UI', size=11, bold=True, color='FFFFFF')  # Chữ trắng, in đậm
-                data_font = Font(name='Segoe UI', size=10)
+                # Xuất ra file Excel trong bộ nhớ đệm (BytesIO) để người dùng tải về trực tiếp
+                excel_buffer = io.BytesIO()
+                with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
+                    # Ghi dataframe vào sheet chính
+                    df.to_excel(writer, index=False, sheet_name="HoaDonTricXuat")
+                    
+                    # Tùy biến độ rộng cột tự động trên openpyxl
+                    workbook = writer.book
+                    worksheet = writer.sheets["HoaDonTricXuat"]
+                    for col in worksheet.columns:
+                        max_len = max(len(str(cell.value or '')) for cell in col)
+                        col_letter = col[0].column_letter
+                        worksheet.column_dimensions[col_letter].width = max(max_len + 3, 12)
                 
-                # Áp dụng định dạng (border, font, căn lề, format số) cho từng ô
-                for row_idx, row in enumerate(worksheet.iter_rows(min_row=1, max_row=worksheet.max_row, min_col=1, max_col=worksheet.max_column), start=1):
-                    for col_idx, cell in enumerate(row, start=1):
-                        # Áp dụng kẻ khung viền cho tất cả các ô
-                        cell.border = thin_border
-                        
-                        if row_idx == 1:
-                            # Định dạng cho hàng tiêu đề
-                            cell.fill = header_fill
-                            cell.font = header_font
-                            cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
-                        else:
-                            # Định dạng cho hàng dữ liệu
-                            cell.font = data_font
-                            
-                            # Căn lề số tiền sang bên phải (các cột: Tiền Trước Thuế, Tiền Thuế GTGT, Tổng Thanh Toán - nay là cột 7, 8, 9)
-                            if col_idx in [7, 8, 9]:
-                                cell.alignment = Alignment(horizontal='right', vertical='center')
-                                # Định dạng hiển thị số tiền có dấu phân cách hàng nghìn (ví dụ: 1,500,000)
-                                if isinstance(cell.value, (int, float)):
-                                    cell.number_format = '#,##0'
-                            # Căn lề giữa cho các cột ngắn (STT, Số Hóa Đơn, Ngày Lập, MST Bán, Trạng Thái - nay là cột 1, 3, 4, 5, 10)
-                            elif col_idx in [1, 3, 4, 5, 10]:
-                                cell.alignment = Alignment(horizontal='center', vertical='center')
-                            # Căn lề trái cho các cột văn bản dài (Tên File, Đơn Vị Bán, Chi Tiết Lỗi - nay là cột 2, 6, 11)
-                            else:
-                                cell.alignment = Alignment(horizontal='left', vertical='center')
+                excel_data = excel_buffer.getvalue()
                 
-                # Tự động điều chỉnh độ rộng cột dựa trên nội dung đã định dạng
-                for col in worksheet.columns:
-                    max_len = 0
-                    for cell in col:
-                        val_str = str(cell.value or '')
-                        # Nếu là số tiền, tính độ dài dựa trên chuỗi đã format có dấu phẩy phân cách nghìn
-                        if cell.number_format == '#,##0' and isinstance(cell.value, (int, float)):
-                            val_str = f"{cell.value:,.0f}"
-                        max_len = max(max_len, len(val_str))
-                    col_letter = col[0].column_letter
-                    worksheet.column_dimensions[col_letter].width = max(max_len + 4, 12)
+                # Cung cấp nút tải về Excel
+                st.download_button(
+                    label="📥 Tải xuống File Excel (.xlsx)",
+                    data=excel_data,
+                    file_name="Hoa_don_trich_xuat_AI.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True
+                )
             
-            excel_data = excel_buffer.getvalue()
-            
-            # Nút tải xuống Excel
-            st.download_button(
-                label="📥 Tải xuống kết quả Excel (.xlsx)",
-                data=excel_data,
-                file_name="ket_qua_trich_xuat_hoa_don.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                use_container_width=True
-            )
-            
-            # Hiển thị báo cáo lỗi chi tiết nếu có file xử lý thất bại
-            if fail_count > 0:
-                st.markdown("### ⚠️ Nhật ký lỗi chi tiết")
-                for r in results:
-                    if r["status"] == "Thất bại":
-                        st.error(f"**File:** `{r['file_name']}` | **Lỗi:** {r['error_message']}")
+            # Hiển thị bảng lỗi nếu có để admin dễ kiểm tra
+            if failed_results:
+                with st.expander("🔍 Chi tiết các tệp bị lỗi"):
+                    df_failed = pd.DataFrame(failed_results)
+                    st.table(df_failed)
+else:
+    # Trạng thái ban đầu khi chưa tải file
+    st.info("💡 Vui lòng kéo thả hoặc tải lên các tệp hóa đơn của bạn ở khung bên trên để bắt đầu trích xuất.")
