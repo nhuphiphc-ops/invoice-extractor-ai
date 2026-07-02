@@ -289,8 +289,8 @@ if uploaded_files:
                         }
                         success_results.append(processed_item)
                         
-                        # Giãn cách nhẹ giữa các file để tránh kích hoạt cơ chế chống spam (RPM limit)
-                        time.sleep(1.5)
+                        # Giãn cách siêu ngắn để tránh RPM limit nhưng vẫn đảm bảo tốc độ tối đa
+                        time.sleep(0.3)
                         
                     except Exception as e:
                         # Ghi nhận lỗi và hiển thị cảnh báo để tránh sập app (Fault-tolerant)
