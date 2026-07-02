@@ -154,7 +154,7 @@ def extract_invoice_data(api_key, file_bytes, mime_type, file_name, status_place
             genai.configure(api_key=api_key)
             
             # Khởi tạo mô hình Gemini 2.5 Flash
-            model = genai.GenerativeModel('gemini-1.5-flash')  # Quota miễn phí: 1,500 req/ngày (cao hơn 6x so với gemini-2.5-flash)
+            model = genai.GenerativeModel('gemini-2.0-flash')  # Quota miễn phí: 1,500 req/ngày
             
             # Đóng gói file thành format đầu vào của Gemini Multimodal API
             file_part = {
