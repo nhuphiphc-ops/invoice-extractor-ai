@@ -233,68 +233,38 @@ def extract_invoice_data(api_key, file_bytes, mime_type, file_name, status_place
 # 6. GIAO DIỆN PHẦN MỀM (FRONTEND)
 # ==============================================================================
 
-# KỊCH BẢN 1: NẾU NGƯỜI DÙNG CHƯA ĐĂNG NHẬP -> HIỂN THỊ MÀN HÌNH LOGIN
-if not st.session_state["authenticated"]:
-    st.markdown("<h1 class='main-title'>🧾 AI Invoice Extractor</h1>", unsafe_allow_html=True)
-    st.markdown("<p class='subtitle'>Hệ thống Trích xuất Hóa đơn Tự động bằng Trí tuệ nhân tạo</p>", unsafe_allow_html=True)
-    
-    # Tạo Form đăng nhập căn giữa
-    col1, col2, col3 = st.columns([1, 1.8, 1])
-    with col2:
-        st.markdown("<div class='login-box'>", unsafe_allow_html=True)
-        st.markdown("<h3 style='text-align: center; color: #1E3A8A; margin-top: 0;'>🔐 ĐĂNG NHẬP HỆ THỐNG</h3>", unsafe_allow_html=True)
-        
-        with st.form("login_form"):
-            email_input = st.text_input("📧 Email tài khoản", placeholder="nhap-email@example.com")
-            password_input = st.text_input("🔑 Mật khẩu", type="password", placeholder="••••••••")
-            login_submit = st.form_submit_button("Đăng nhập", use_container_width=True)
-            
-            if login_submit:
-                # Kiểm tra cấu hình credentials trước
-                if "credentials" not in st.secrets:
-                    st.error("⚠️ Hệ thống chưa được cấu hình danh sách tài khoản (credentials) trong Secrets!")
-                elif check_login(email_input, password_input):
-                    st.session_state["authenticated"] = True
-                    st.success("Đăng nhập thành công! Đang tải hệ thống...")
-                    st.rerun()
-                else:
-                    st.error("❌ Tài khoản không hợp lệ hoặc sai mật khẩu")
-        st.markdown("</div>", unsafe_allow_html=True)
+# ==============================================================================
+# 6. GIAO DIỆN PHẦN MỀM (FRONTEND CHÍNH)
+# ==============================================================================
 
-# KỊCH BẢN 2: NẾU ĐÃ ĐĂNG NHẬP THÀNH CÔNG -> HIỂN THỊ TOÀN BỘ CHỨC NĂNG CHÍNH
-else:
-    # Sidebar hướng dẫn cấu hình & thông tin dự án
-    with st.sidebar:
-        st.image("https://img.icons8.com/clouds/200/000000/invoice.png", width=120)
-        st.markdown("### 📑 Hướng Dẫn Sử Dụng")
-        st.markdown(
-            """
-            1. **Tải lên hóa đơn**: Nhấn nút browse hoặc kéo thả các file hóa đơn dạng **PDF** hoặc **ảnh (PNG, JPG, JPEG)** vào khung tải lên.
-            2. **Trích xuất dữ liệu**: Nhấn nút **Bắt đầu trích xuất**. Hệ thống sẽ gọi Gemini AI xử lý song song từng file.
-            3. **Xem kết quả**: Kiểm tra bảng dữ liệu tổng hợp trực tiếp trên web.
-            4. **Xuất Excel**: Tải file Excel chứa toàn bộ thông tin đã trích xuất về máy.
-            """
-        )
-        st.markdown("---")
-        st.markdown("### 🔒 Bảo Mật Thông Tin")
-        st.info(
-            "API Key được quản lý an toàn qua biến môi trường (Streamlit Secrets). "
-            "Dữ liệu hóa đơn của bạn chỉ được xử lý qua API và không được lưu trữ lại trên máy chủ."
-        )
-        st.markdown("---")
-        # Nút đăng xuất ở sidebar
-        if st.button("🚪 Đăng xuất tài khoản", use_container_width=True, type="secondary"):
-            st.session_state["authenticated"] = False
-            st.rerun()
-        st.markdown("---")
-        st.markdown("⚡ *Powered by Gemini 2.5 Flash*")
+# Hiển thị trực tiếp toàn bộ chức năng chính (Đã loại bỏ màn hình đăng nhập)
+# Sidebar hướng dẫn cấu hình & thông tin dự án
+with st.sidebar:
+    st.image("https://img.icons8.com/clouds/200/000000/invoice.png", width=120)
+    st.markdown("### 📑 Hướng Dẫn Sử Dụng")
+    st.markdown(
+        """
+        1. **Tải lên hóa đơn**: Nhấn nút browse hoặc kéo thả các file hóa đơn dạng **PDF** hoặc **ảnh (PNG, JPG, JPEG)** vào khung tải lên.
+        2. **Trích xuất dữ liệu**: Nhấn nút **Bắt đầu trích xuất**. Hệ thống sẽ gọi Gemini AI xử lý song song từng file.
+        3. **Xem kết quả**: Kiểm tra bảng dữ liệu tổng hợp trực tiếp trên web.
+        4. **Xuất Excel**: Tải file Excel chứa toàn bộ thông tin đã trích xuất về máy.
+        """
+    )
+    st.markdown("---")
+    st.markdown("### 🔒 Bảo Mật Thông Tin")
+    st.info(
+        "API Key được quản lý an toàn qua biến môi trường (Streamlit Secrets). "
+        "Dữ liệu hóa đơn của bạn chỉ được xử lý qua API và không được lưu trữ lại trên máy chủ."
+    )
+    st.markdown("---")
+    st.markdown("⚡ *Powered by Gemini 2.0 Flash*")
 
-    # Phần tiêu đề chính của trang chức năng
-    st.markdown("<h1 class='main-title'>🧾 AI Invoice Extractor</h1>", unsafe_allow_html=True)
-    st.markdown("<p class='subtitle'>Trích xuất hóa đơn PDF & Ảnh sang Excel tự động bằng Trí tuệ nhân tạo Gemini</p>", unsafe_allow_html=True)
+# Phần tiêu đề chính của trang chức năng
+st.markdown("<h1 class='main-title'>🧾 AI Invoice Extractor</h1>", unsafe_allow_html=True)
+st.markdown("<p class='subtitle'>Trích xuất hóa đơn PDF & Ảnh sang Excel tự động bằng Trí tuệ nhân tạo Gemini</p>", unsafe_allow_html=True)
 
-    # Kiểm tra trạng thái cấu hình API Key
-    if not api_key:
+# Kiểm tra trạng thái cấu hình API Key
+if not api_key:
         st.warning("⚠️ **Hệ thống chưa được cấu hình API Key!**")
         st.markdown(
             """
