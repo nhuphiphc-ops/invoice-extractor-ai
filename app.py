@@ -173,8 +173,8 @@ with st.sidebar:
     st.markdown("⚡ *Powered by Gemini 2.5 Flash*")
 
 # Phần tiêu đề chính
-st.markdown("<h1 class='main-title'>🧾 AI Invoice Extractor</h1>", unsafe_allowed_html=True)
-st.markdown("<p class='subtitle'>Trích xuất hóa đơn PDF & Ảnh sang Excel tự động bằng Trí tuệ nhân tạo Gemini</p>", unsafe_allowed_html=True)
+st.markdown("<h1 class='main-title'>🧾 AI Invoice Extractor</h1>", unsafe_allow_html=True)
+st.markdown("<p class='subtitle'>Trích xuất hóa đơn PDF & Ảnh sang Excel tự động bằng Trí tuệ nhân tạo Gemini</p>", unsafe_allow_html=True)
 
 # Kiểm tra trạng thái cấu hình API Key
 if not api_key:
