@@ -45,7 +45,7 @@ st.markdown("""
         overflow: hidden;
     }
 </style>
-""", unsafe_allowed_html=True)
+""", unsafe_allow_html=True)
 
 # ==============================================================================
 # 2. XÁC THỰC API KEY BẢO MẬT
