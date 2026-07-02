@@ -117,12 +117,14 @@ model_choice = st.sidebar.selectbox(
     help="Hệ thống tự động quét và hiển thị các mô hình khả dụng tương thích với API Key của bạn."
 )
 
-st.sidebar.markdown("""
----
-### 📌 Lưu ý cấu hình Secrets khi Deploy:
-Để không cần nhập API Key mỗi lần mở web, hãy tạo cấu hình biến môi trường trên Streamlit Cloud với key:
-`GEMINI_API_KEY = "key_của_bạn"`
-""")
+# Chỉ hiển thị hướng dẫn cấu hình nếu chưa có API Key tự động trong Secrets
+if "GEMINI_API_KEY" not in st.secrets:
+    st.sidebar.markdown("""
+    ---
+    ### 📌 Lưu ý cấu hình Secrets khi Deploy:
+    Để không cần nhập API Key mỗi lần mở web, hãy tạo cấu hình biến môi trường trên Streamlit Cloud với key:
+    `GEMINI_API_KEY = "key_của_bạn"`
+    """)
 
 # ---------------------------------------------------------
 # Hàm hỗ trợ làm sạch dữ liệu số liệu
