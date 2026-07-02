@@ -69,16 +69,47 @@ def get_api_key():
 api_key = get_api_key()
 
 # ==============================================================================
-# 3. ĐỊNH NGHĨA PYDANTIC SCHEMA CHO TRÍCH XUẤT DỮ LIỆU CÓ CẤU TRÚC
+# 3. ĐỊNH NGHĨA SCHEMA CHO TRÍCH XUẤT DỮ LIỆU CÓ CẤU TRÚC (GEMINI SCHEMA DICT)
 # ==============================================================================
-class InvoiceExtraction(BaseModel):
-    invoice_number: Optional[str] = Field(None, description="Số hóa đơn (Invoice number/No.). Nếu không tìm thấy, trả về null.")
-    invoice_date: Optional[str] = Field(None, description="Ngày lập hóa đơn (Invoice date). Định dạng chuẩn DD/MM/YYYY. Nếu không tìm thấy, trả về null.")
-    seller_tax_code: Optional[str] = Field(None, description="Mã số thuế của bên bán / đơn vị cung cấp (Seller's Tax Code/MST). Nếu không tìm thấy, trả về null.")
-    seller_name: Optional[str] = Field(None, description="Tên công ty / đơn vị bán hàng (Seller's Name). Nếu không tìm thấy, trả về null.")
-    total_before_tax: Optional[float] = Field(None, description="Tổng tiền hàng chưa thuế / giá trị trước thuế (Total before tax/Subtotal). Trả về dạng số float. Nếu không tìm thấy, trả về null.")
-    tax_amount: Optional[float] = Field(None, description="Tiền thuế GTGT / VAT (Tax amount). Trả về dạng số float. Nếu không tìm thấy, trả về null.")
-    total_amount: Optional[float] = Field(None, description="Tổng cộng tiền thanh toán đã bao gồm thuế (Total payment amount/Total after tax). Trả về dạng số float. Nếu không tìm thấy, trả về null.")
+# Định nghĩa Schema bằng dict chuẩn OpenAPI được Gemini API hỗ trợ trực tiếp.
+# Cách này tránh mọi lỗi tương thích về trường 'default' tự sinh của thư viện Pydantic.
+invoice_schema = {
+    "type": "OBJECT",
+    "properties": {
+        "invoice_number": {
+            "type": "STRING",
+            "description": "Số hóa đơn (Invoice number/No.). Nếu không tìm thấy, trả về null."
+        },
+        "invoice_date": {
+            "type": "STRING",
+            "description": "Ngày lập hóa đơn (Invoice date). Định dạng chuỗi chuẩn DD/MM/YYYY. Nếu không tìm thấy, trả về null."
+        },
+        "seller_tax_code": {
+            "type": "STRING",
+            "description": "Mã số thuế của bên bán / đơn vị cung cấp (Seller's Tax Code/MST). Nếu không tìm thấy, trả về null."
+        },
+        "seller_name": {
+            "type": "STRING",
+            "description": "Tên công ty / đơn vị bán hàng (Seller's Name). Nếu không tìm thấy, trả về null."
+        },
+        "total_before_tax": {
+            "type": "NUMBER",
+            "description": "Tổng tiền hàng chưa thuế / giá trị trước thuế (Total before tax/Subtotal). Trả về dạng số thực (float). Nếu không tìm thấy, trả về null."
+        },
+        "tax_amount": {
+            "type": "NUMBER",
+            "description": "Tiền thuế GTGT / VAT (Tax amount). Trả về dạng số thực (float). Nếu không tìm thấy, trả về null."
+        },
+        "total_amount": {
+            "type": "NUMBER",
+            "description": "Tổng cộng tiền thanh toán đã bao gồm thuế (Total payment amount/Total after tax). Trả về dạng số thực (float). Nếu không tìm thấy, trả về null."
+        }
+    },
+    "required": [
+        "invoice_number", "invoice_date", "seller_tax_code", 
+        "seller_name", "total_before_tax", "tax_amount", "total_amount"
+    ]
+}
 
 # ==============================================================================
 # 4. LOGIC XỬ LÝ BACKEND (GỌI GEMINI API & CƠ CHẾ SELF-CHECKING)
@@ -113,12 +144,12 @@ def extract_invoice_data(api_key, file_bytes, mime_type, file_name):
             "3. Nếu thông tin nào không tồn tại trong hóa đơn, hãy trả về null."
         )
         
-        # Gọi API với cấu hình Structured Output thông qua response_schema
+        # Gọi API với cấu hình Structured Output thông qua response_schema dạng dict
         response = model.generate_content(
             [prompt, file_part],
             generation_config=genai.GenerationConfig(
                 response_mime_type="application/json",
-                response_schema=InvoiceExtraction,
+                response_schema=invoice_schema,
                 temperature=0.1  # Giảm tính ngẫu nhiên để tăng độ chính xác trích xuất
             )
         )
