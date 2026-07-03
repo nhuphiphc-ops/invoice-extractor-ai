@@ -234,41 +234,50 @@ if uploaded_files:
             # Tạo thanh tiến trình tổng quan
             progress_bar = st.progress(0.0)
             status_text = st.empty()
-            status_text.markdown("⚡ **Đang bắt đầu xử lý song song các hóa đơn...**")
             
-            from concurrent.futures import ThreadPoolExecutor, as_completed
+            total_files = len(uploaded_files)
             
-            # Giới hạn tối đa 5 luồng xử lý song song để tránh vượt ngưỡng RPM của API
-            max_workers = min(5, len(uploaded_files))
-            
-            with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                # Gửi toàn bộ file vào hàng chờ xử lý của Thread Pool
-                future_to_filename = {
-                    executor.submit(
-                        extract_invoice_data, 
-                        file.getvalue(), 
-                        file.type, 
-                        model_choice, 
-                        api_key
-                    ): file.name for file in uploaded_files
-                }
+            # Duyệt tuần tự qua từng file
+            for idx, file in enumerate(uploaded_files):
+                file_name = file.name
+                mime_type = file.type
+                file_bytes = file.getvalue()
                 
-                completed = 0
-                total_files = len(uploaded_files)
+                # Cập nhật tiến trình thời gian thực
+                percent_complete = idx / total_files
+                progress_bar.progress(percent_complete)
+                status_text.markdown(f"⏳ **Đang xử lý ({idx+1}/{total_files}):** `{file_name}`...")
                 
-                for future in as_completed(future_to_filename):
-                    file_name = future_to_filename[future]
-                    completed += 1
+                # Sử dụng spinner riêng cho từng file để hiển thị trạng thái sinh động
+                with st.spinner(f"Đang bóc tách file {file_name}..."):
+                    # Thiết lập cơ chế thử lại (Retry Mechanism) trực tiếp
+                    max_retries = 5
+                    attempt = 0
+                    success = False
+                    raw_data = None
+                    last_error = ""
                     
-                    # Cập nhật tiến trình thời gian thực
-                    percent_complete = completed / total_files
-                    progress_bar.progress(percent_complete)
-                    status_text.markdown(f"⏳ **Tiến trình:** Đã hoàn thành `{completed}/{total_files}` file...")
+                    while attempt < max_retries and not success:
+                        try:
+                            # Gọi hàm bóc tách dữ liệu từ API
+                            raw_data = extract_invoice_data(file_bytes, mime_type, model_choice, api_key)
+                            success = True
+                        except Exception as e:
+                            attempt += 1
+                            last_error = str(e)
+                            err_lower = last_error.lower()
+                            
+                            # Xác định nếu gặp lỗi RPM / Giới hạn lượt gọi (429)
+                            is_rate_limit = any(x in err_lower for x in ["429", "quota", "resourceexhausted", "rate limit"])
+                            
+                            if is_rate_limit and attempt < max_retries:
+                                st.toast(f"⚠️ `{file_name}` chạm giới hạn RPM. Đang nhẫn nhịn chờ 3s để thử lại (Lần {attempt}/{max_retries-1})...", icon="⏳")
+                                time.sleep(3.0) # Nhẫn nhịn chờ 3 giây trước khi thử lại
+                            else:
+                                # Nếu là lỗi khác (file hỏng, sai format...) hoặc đã hết lượt thử lại
+                                break
                     
-                    try:
-                        # Nhận kết quả từ luồng chạy
-                        raw_data = future.result()
-                        
+                    if success and raw_data:
                         # Làm sạch dữ liệu số liệu
                         subtotal_clean = clean_numeric_value(raw_data.get("subtotal", 0.0))
                         tax_clean = clean_numeric_value(raw_data.get("tax_amount", 0.0))
@@ -287,15 +296,16 @@ if uploaded_files:
                         }
                         success_results.append(processed_item)
                         
-                    except Exception as e:
-                        # Ghi nhận lỗi cho file này và tiếp tục chạy các luồng khác (Fault-tolerant)
-                        error_msg = str(e)
+                        # Cơ chế Trì hoãn (Rate Limiting/Sleep): Cho code nghỉ ngơi 2 giây sau mỗi file thành công
+                        time.sleep(2.0)
+                    else:
+                        # Ghi nhận lỗi cho file này và tiếp tục xử lý các file khác (Fault-tolerant)
                         failed_results.append({
                             "Tên file": file_name,
-                            "Lỗi chi tiết": error_msg
+                            "Lỗi chi tiết": last_error
                         })
                         st.toast(f"❌ Lỗi xử lý file {file_name}!", icon="⚠️")
-                        st.warning(f"⚠️ Không thể xử lý file **{file_name}**. Lỗi: {error_msg}")
+                        st.warning(f"⚠️ Không thể xử lý file **{file_name}**. Lỗi: {last_error}")
             
             # Cập nhật thanh tiến trình hoàn thành 100%
             progress_bar.progress(1.0)
