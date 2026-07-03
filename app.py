@@ -90,12 +90,12 @@ if api_key:
 else:
     st.sidebar.warning("⚠️ Vui lòng cung cấp API Key để bắt đầu bóc tách.")
 
-# Cho phép chọn Model (Danh sách mô hình ổn định được cấu hình thủ công)
+# Cho phép chọn Model (Chỉ hiển thị các mô hình thế hệ mới đang hoạt động của năm 2026)
 model_choice = st.sidebar.selectbox(
     "Chọn mô hình AI:",
-    ["gemini-2.0-flash", "gemini-2.5-flash", "gemini-1.5-flash", "gemini-2.5-pro", "gemini-1.5-pro"],
+    ["gemini-2.0-flash", "gemini-2.5-flash", "gemini-2.5-pro"],
     index=0,
-    help="Nên ưu tiên chọn gemini-2.0-flash để có tốc độ nhanh nhất và hạn mức gọi API rộng rãi nhất."
+    help="Khuyên dùng mô hình gemini-2.0-flash để tối ưu về tốc độ và tránh bị giới hạn lượt gọi API."
 )
 
 # Chỉ hiển thị hướng dẫn cấu hình nếu chưa có API Key tự động trong Secrets
